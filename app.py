@@ -1,47 +1,48 @@
 import streamlit as st
 import pandas as pd
 
-# 1. 앱 대문 꾸미기
-st.title("🚀 내 마음대로 바꾸는 배당 앱")
-st.write("왼쪽 메뉴(화살표)를 눌러서 종목 이름과 수량을 바꿔보세요!")
+# 1. 앱 페이지 설정 (브라우저 탭에 보일 이름)
+st.set_page_config(page_title="배당 앱 개발 진행 상황", page_icon="💰")
 
-# 2. 왼쪽 사이드바(서랍장)에 입력칸 만들기
-st.sidebar.header("📋 종목 설정")
+# 2. 대문 꾸미기
+st.title("📊 배당 앱 프로젝트 (v1.5)")
+st.info("데이터 연동 및 분석 기능을 95% 목표로 고도화 중입니다!")
 
-# 첫 번째 종목 설정
-stock_name_1 = st.sidebar.text_input("첫 번째 종목 이름", value="미배콜")
-count_1 = st.sidebar.number_input(f"{stock_name_1} 수량", value=2000)
-div_1 = st.sidebar.number_input(f"{stock_name_1} 1주당 배당금(원)", value=100)
+# 3. 사이드바 - 내 종목 관리 (기획안 1번 기능)
+st.sidebar.header("📋 나의 종목 관리")
+user_name = st.sidebar.text_input("사용자 이름", value="윤재")
+m_call = st.sidebar.number_input("미배콜(490600) 수량", value=2000)
+m_dang = st.sidebar.number_input("미배당(미국배당100) 수량", value=860)
 
-st.sidebar.markdown("---") # 줄 긋기
+# 4. 메인 화면 - 포트폴리오 요약 (기획안 2번 기능)
+st.subheader(f"✨ {user_name}님의 배당 포트폴리오")
+total_div = (m_call * 100) + (m_dang * 40)
 
-# 두 번째 종목 설정
-stock_name_2 = st.sidebar.text_input("두 번째 종목 이름", value="미배당")
-count_2 = st.sidebar.number_input(f"{stock_name_2} 수량", value=860)
-div_2 = st.sidebar.number_input(f"{stock_name_2} 1주당 배당금(원)", value=40)
+c1, c2, c3 = st.columns(3)
+c1.metric("월 배당금", f"{total_div:,} 원")
+c2.metric("연 배당금", f"{total_div * 12:,} 원")
+c3.metric("치킨 환산", f"{int(total_div/20000)} 마리")
 
-# 3. 계산하기
-total_1 = count_1 * div_1
-total_2 = count_2 * div_2
-grand_total = total_1 + total_2
-
-# 4. 화면에 예쁘게 보여주기
-st.subheader("💰 이번 달 예상 보물상자")
-
-col1, col2 = st.columns(2)
-with col1:
-    st.metric(stock_name_1, f"{total_1:,} 원")
-with col2:
-    st.metric(stock_name_2, f"{total_2:,} 원")
-
+# 5. 시나리오 기반 미래 예측 (기획안 3번 기능)
 st.divider()
-st.header(f"✨ 총 합계: {grand_total:,} 원")
+st.subheader("📈 시나리오 기반 미래 예측")
+scenario = st.radio("예측 모드 선택", ["보수적(현재 유지)", "긍정적(배당 성장)"])
 
-# 5. 배당 달력 (입력한 이름이 자동으로 들어감)
-st.subheader("📅 배당 일정")
-calendar_data = {
-    '종목': [stock_name_1, stock_name_2],
-    '입금예정일': ['매월 초', '매월 초'],
-    '받을 금액': [f"{total_1:,}원", f"{total_2:,}원"]
-}
-st.table(pd.DataFrame(calendar_data))
+if scenario == "긍정적(배당 성장)":
+    predict_div = total_div * 1.15
+    st.write(f"🚀 **긍정적 시나리오:** 기업 실적이 좋아져 배당이 15% 늘어난다면, 매월 **{int(predict_div):,}원**을 받게 됩니다!")
+else:
+    st.write("⚖️ **보수적 시나리오:** 현재 배당금을 잘 유지하며 안전하게 자산을 지키는 중입니다.")
+
+# 6. 배당 캘린더 (기획안 4번 기능)
+st.subheader("📅 배당 캘린더 (준비 중)")
+st.caption("※ 현재 증권사 API 연동 작업을 90% 진행 중입니다. 곧 실시간 날짜가 뜹니다!")
+
+# 7. 우리의 약속 (기획안 핵심 문구)
+st.divider()
+st.write("---")
+st.center = st.markdown(
+    f"<h4 style='text-align: center; color: gray;'>"
+    f"💖 {user_name}와 소은이의 소중한 대화와 이야기에서 탄생한 앱입니다."
+    f"</h4>", unsafe_allow_html=True
+)
