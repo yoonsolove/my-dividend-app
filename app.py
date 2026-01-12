@@ -5,7 +5,7 @@ import yfinance as yf
 from datetime import datetime, date
 
 # 1. 앱 설정
-st.set_page_config(page_title="배당 대시보드 v5.5", page_icon="💰", layout="wide")
+st.set_page_config(page_title="배당 대시보드 v5.6", page_icon="💰", layout="wide")
 
 # 2. 데이터 함수
 @st.cache_data(ttl=300)
@@ -32,16 +32,18 @@ if 'stock_list' not in st.session_state:
         {"name": "미배당", "ticker": "402320.KS", "qty": 860}
     ]
 
-# 4. 사이드바 설정 (물가 및 투자금)
+# 4. 사이드바 설정 (매수 및 재투자 설정 복구)
 user_name = st.sidebar.text_input("사용자 이름", value="윤재")
 st.sidebar.divider()
 st.sidebar.subheader("🍔 물가 설정")
 chicken_p = st.sidebar.number_input("치킨 가격", value=30000, step=1000)
 coffee_p = st.sidebar.number_input("커피 가격", value=5000, step=500)
+
 st.sidebar.divider()
-st.sidebar.subheader("📈 시뮬레이션 설정")
-add_m = st.sidebar.slider("매달 추가 투자(만원)", 0, 1000, 100, step=10)
-sim_y = st.sidebar.slider("시뮬레이션 기간(년)", 5, 40, 20, step=5)
+st.sidebar.subheader("⚙️ 투자 시나리오")
+add_m = st.sidebar.slider("매달 추가 투자금 (만원)", 0, 1000, 100, step=10)
+reinvest_rate = st.sidebar.slider("배당금 재투자 비율 (%)", 0, 100, 100, step=10)
+sim_y = st.sidebar.slider("시뮬레이션 기간 (년)", 5, 40, 20, step=5)
 
 # 5. 데이터 계산
 portfolio_data, total_asset, total_div_pre = [], 0, 0
@@ -56,7 +58,7 @@ for s in st.session_state.stock_list:
 df = pd.DataFrame(portfolio_data)
 total_div_post = total_div_pre * 0.846
 
-# 6. 메인 대시보드 출력
+# 6. 메인 화면 출력
 st.title(f"📊 {user_name}님의 배당 리포트")
 
 # 상단 지표
@@ -64,42 +66,47 @@ c1, c2 = st.columns(2)
 c1.metric("총 자산", f"{total_asset:,.0f}원")
 c2.metric("월 수령액(세후)", f"{total_div_post:,.0f}원")
 
-# 치킨/커피 지수 안내
-st.info(f"✨ 이번 달 배당금은 **치킨 {total_div_post//chicken_p:,.0f}마리** 또는 **커피 {total_div_post//coffee_p:,.0f}잔** 분량입니다!")
+st.info(f"✨ 현재 배당금으로 **치킨 {total_div_post//chicken_p:,.0f}마리**를 즐길 수 있습니다!")
 st.divider()
 
-# 7. 상세 리스트 및 캘린더 (복구 완료!)
-t1, t2 = st.tabs(["📋 종목 상세", "📅 배당 캘린더"])
+# 7. 상세 리스트 및 캘린더
+t1, t2 = st.tabs(["📋 상세 내역", "📅 배당 캘린더"])
 with t1:
     st.dataframe(df.style.format({"자산가치": "{:,.0f}", "월배당(세전)": "{:,.0f}", "세후": "{:,.0f}"}), use_container_width=True)
-
 with t2:
     cal_list = []
     for m in [f"{i}월" for i in range(1, 13)]:
         for _, row in df.iterrows():
             cal_list.append({"월": m, "종목": row["종목"], "금액": row["세후"]})
-    st.plotly_chart(px.bar(pd.DataFrame(cal_list), x="월", y="금액", color="종목", title="연간 세후 배당 흐름"), use_container_width=True)
+    st.plotly_chart(px.bar(pd.DataFrame(cal_list), x="월", y="금액", color="종목"), use_container_width=True)
 
-# 8. 시뮬레이션 섹션 (개선된 버전 유지)
+# 8. 시뮬레이션 (복리 로직 강화)
 st.divider()
 st.subheader("❄️ 미래 성장 시뮬레이션")
 sim_results = []
 temp_asset = total_asset
-avg_yield_post = (total_div_post * 12) / total_asset if total_asset > 0 else 0.1
+# 현재 포트폴리오의 세후 연 배당수익률 계산
+annual_yield_post = (total_div_post * 12) / total_asset if total_asset > 0 else 0.1
 
 for m in range(1, (sim_y * 12) + 1):
-    temp_asset += (temp_asset * avg_yield_post / 12) + (add_m * 10000)
+    # 1. 이번 달 세후 배당금 발생
+    monthly_div = (temp_asset * annual_yield_post / 12)
+    # 2. 재투자 금액 + 추가 투자금 계산
+    invest_amt = (monthly_div * (reinvest_rate / 100)) + (add_m * 10000)
+    # 3. 자산 업데이트
+    temp_asset += invest_amt
+    
     if m % (10 * 12) == 0 or m == (sim_y * 12):
         y = m // 12
         sim_results.append({
             "년수": f"{y}년 후", 
             "자산(억)": round(temp_asset / 100000000, 2),
-            "월배당(만원)": int((temp_asset * avg_yield_post / 12) / 10000)
+            "월배당(만원)": int((temp_asset * annual_yield_post / 12) / 10000)
         })
 
-st.plotly_chart(px.area(pd.DataFrame(sim_results), x="년수", y="자산(억)", text="자산(억)", title="자산 성장 (억 단위)"), use_container_width=True)
+st.plotly_chart(px.area(pd.DataFrame(sim_results), x="년수", y="자산(억)", text="자산(억)", title=f"자산 성장 (재투자 {reinvest_rate}%)"), use_container_width=True)
 
-# 주요 지점 수치 카드
+# 주요 수치 요약 카드
 for row in sim_results:
     with st.container():
         sc1, sc2, sc3 = st.columns([1, 2, 2])
@@ -108,8 +115,8 @@ for row in sim_results:
         sc3.metric("예상 월급", f"{row['월배당(만원)']} 만원")
         st.write("---")
 
-# 9. 종목 관리 (하단 배치)
-with st.expander("📝 종목 관리 및 추가"):
+# 9. 종목 관리
+with st.expander("📝 보유 종목 관리 및 추가"):
     n_name = st.text_input("종목명")
     n_ticker = st.text_input("티커")
     n_qty = st.number_input("수량", min_value=0, value=100)
@@ -119,10 +126,10 @@ with st.expander("📝 종목 관리 및 추가"):
     
     for i, stock in enumerate(st.session_state.stock_list):
         ec1, ec2, ec3 = st.columns([2, 2, 1])
-        ec1.write(stock['name'])
-        st.session_state.stock_list[i]['qty'] = ec2.number_input("수량", value=stock['qty'], key=f"q_v55_{i}", label_visibility="collapsed")
-        if ec3.button("삭제", key=f"d_v55_{i}"):
+        ec1.write(f"**{stock['name']}**")
+        st.session_state.stock_list[i]['qty'] = ec2.number_input("수량 수정", value=stock['qty'], key=f"fq_v56_{i}", label_visibility="collapsed")
+        if ec3.button("삭제", key=f"fd_v56_{i}"):
             st.session_state.stock_list.pop(i)
             st.rerun()
 
-st.markdown(f"<center>💖 <b>{user_name} & 소은</b> 통합 관리 v5.5 💖</center>", unsafe_allow_html=True)
+st.markdown(f"<center>💖 <b>{user_name} & 소은</b> 통합 관리 v5.6 💖</center>", unsafe_allow_html=True)
