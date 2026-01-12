@@ -5,75 +5,104 @@ import yfinance as yf
 from datetime import datetime
 
 # 1. 앱 설정
-st.set_page_config(page_title="배당 스노볼 분석기", page_icon="❄️", layout="wide")
+st.set_page_config(page_title="통합 배당 대시보드", page_icon="📅", layout="wide")
 
-# 2. 실시간 데이터 가져오기
+# 2. 실시간 데이터 및 환율 가져오기 함수
 @st.cache_data(ttl=600)
-def get_dividend_stocks():
-    tickers = {"미배콜": "490600.KS", "미배당": "402320.KS"}
-    prices = {}
-    for name, code in tickers.items():
+def get_all_data(tickers_dict):
+    data = {}
+    # 환율 가져오기 (원/달러)
+    usd_krw = yf.Ticker("USDKRW=X").history(period="1d")['Close'].iloc[-1]
+    
+    for name, code in tickers_dict.items():
         try:
             stock = yf.Ticker(code)
-            prices[name] = stock.history(period="1d")['Close'].iloc[-1]
+            price = stock.history(period="1d")['Close'].iloc[-1]
+            # 배당 정보 (최근 1년 배당금 기반으로 월평균 추정)
+            div_info = stock.dividends
+            last_year_div = div_info[div_info.index > (datetime.now() - pd.Timedelta(days=365))].sum()
+            monthly_div = last_year_div / 12 if last_year_div > 0 else 0
+            
+            # 미국 주식일 경우 원화 환산
+            if not code.endswith(".KS") and not code.endswith(".KQ"):
+                price *= usd_krw
+                monthly_div *= usd_krw
+                
+            data[name] = {"price": price, "monthly_div": monthly_div}
         except:
-            prices[name] = 10000 
-    return prices
+            data[name] = {"price": 0, "monthly_div": 0}
+    return data, usd_krw
 
-current_prices = get_dividend_stocks()
+# 3. 사이드바 - 종목 관리 (1번 항목 구현: 종목 확장)
+st.sidebar.header("👤 {0}님의 포트폴리오".format("윤재"))
+user_name = st.sidebar.text_input("사용자 이름", value="윤재")
 
-# 3. 사이드바 - 설정
-st.sidebar.header("👤 설정")
-user_name = st.sidebar.text_input("사용자 이름", value="윤재") 
-m_call_qty = st.sidebar.number_input("미배콜 보유 수량", value=2000)
-m_dang_qty = st.sidebar.number_input("미배당 보유 수량", value=860)
+st.sidebar.subheader("➕ 종목 추가 및 수정")
+# 기본 종목 리스트 (사용자가 여기서 수정/추가 가능)
+default_stocks = {
+    "미배콜": "490600.KS",
+    "미배당": "402320.KS",
+    "SCHD(예시)": "SCHD"
+}
 
-st.sidebar.divider()
-st.sidebar.header("❄️ 재투자 시뮬레이션")
-years = st.sidebar.slider("재투자 기간 (년)", 1, 20, 10)
-reinvest_rate = st.sidebar.slider("배당금 재투자 비율 (%)", 0, 100, 100)
+# 수량 입력창 생성
+quantities = {}
+for name, ticker in default_stocks.items():
+    quantities[name] = st.sidebar.number_input(f"{name} 수량", value=2000 if "미배콜" in name else 860)
 
-# 4. 메인 화면 상단
-st.title("❄️ 배당 재투자 스노볼 리포트")
-div_monthly = (m_call_qty * 105) + (m_dang_qty * 40)
-total_asset = (m_call_qty * current_prices["미배콜"]) + (m_dang_qty * current_prices["미배당"])
+# 4. 데이터 로드
+stock_info, current_usd = get_all_data(default_stocks)
 
-col1, col2, col3 = st.columns(3)
-col1.metric("현재 월 배당금", f"{div_monthly:,.0f} 원")
-col2.metric("현재 총 자산", f"{total_asset:,.0f} 원")
-col3.metric("시뮬레이션 기간", f"{years}년")
+# 5. 메인 화면 - 대시보드
+st.title(f"📊 {user_name}님의 통합 배당 캘린더")
+st.caption(f"실시간 환율: 1$ = {current_usd:,.2f}원 | 데이터 기준: {datetime.now().strftime('%H:%M:%S')}")
 
-# 5. 스노볼 계산 로직
-history = []
-temp_asset = total_asset
-temp_monthly_div = div_monthly
-yield_rate = (div_monthly * 12) / total_asset # 현재 배당률 계산
+# 자산 및 배당 계산
+total_asset = 0
+total_monthly_div = 0
+portfolio_details = []
 
-for i in range(1, (years * 12) + 1):
-    # 매달 배당금 발생
-    current_div = temp_monthly_div * (reinvest_rate / 100)
-    # 재투자 (자산 증가)
-    temp_asset += current_div
-    # 자산 증가에 따른 다음 달 배당금 증가 (간단 모델)
-    temp_monthly_div = (temp_asset * yield_rate) / 12
+for name, qty in quantities.items():
+    price = stock_info[name]['price']
+    div = stock_info[name]['monthly_div']
+    asset_val = price * qty
+    div_val = div * qty
     
-    if i % 12 == 0:
-        history.append({"년수": f"{i//12}년차", "월배당금": int(temp_monthly_div), "총자산": int(temp_asset)})
+    total_asset += asset_val
+    total_monthly_div += div_val
+    portfolio_details.append({"종목": name, "자산가치": asset_val, "월배당금": div_val})
 
-df_snowball = pd.DataFrame(history)
+df_portfolio = pd.DataFrame(portfolio_details)
 
-# 6. 미래 성장 그래프
+# 6. 상단 요약 지표
+col1, col2, col3 = st.columns(3)
+col1.metric("총 자산 규모", f"{total_asset:,.0f} 원")
+col2.metric("월 평균 배당금", f"{total_monthly_div:,.0f} 원")
+col3.metric("연간 합계", f"{total_monthly_div * 12:,.0f} 원")
+
+# 7. 배당 캘린더 (3번 항목 구현: 시각적 일정)
 st.divider()
-st.subheader(f"📈 {years}년 후, 당신의 월급은 어떻게 변할까요?")
-fig_growth = px.area(df_snowball, x="년수", y="월배당금", 
-                     title="재투자 시 월 배당금 성장 곡선",
-                     color_discrete_sequence=['#00CC96'])
-st.plotly_chart(fig_growth, use_container_width=True)
+st.subheader("📅 월별 배당 지급 일정 (예측)")
+# 대부분의 월배당 ETF는 매달 지급하므로 이를 시각화
+calendar_data = []
+for m in range(1, 13):
+    for name in quantities.keys():
+        calendar_data.append({"월": f"{m}월", "종목": name, "금액": total_monthly_div / len(quantities)})
 
-# 7. 상세 데이터 표
-with st.expander("📅 연도별 상세 예측 데이터 보기"):
-    st.table(df_snowball)
+df_cal = pd.DataFrame(calendar_data)
+fig_cal = px.bar(df_cal, x="월", y="금액", color="종목", title="월별 배당금 구성")
+st.plotly_chart(fig_cal, use_container_width=True)
 
-# 8. 푸터 (소은 모드)
+# 8. 종목별 비중 분석
+c1, c2 = st.columns(2)
+with c1:
+    st.subheader("🍩 종목별 비중")
+    fig_pie = px.pie(df_portfolio, values='자산가치', names='종목', hole=0.5)
+    st.plotly_chart(fig_pie)
+with c2:
+    st.subheader("📝 상세 내역")
+    st.table(df_portfolio.style.format({"자산가치": "{:,.0f}", "월배당금": "{:,.0f}"}))
+
+# 9. 푸터
 st.divider()
-st.markdown(f"<div style='text-align: center; color: gray;'>💖 <b>{user_name} & 소은</b>의 꿈이 자라는 공간 💖<br>시간이 흐를수록 우리의 자산도, 마음도 함께 성장합니다.</div>", unsafe_allow_html=True)
+st.markdown(f"<center>💖 <b>{user_name} & 소은</b>의 배당 시스템 v3.0 💖<br>우리의 기획이 현실이 되는 순간입니다.</center>", unsafe_allow_html=True)
