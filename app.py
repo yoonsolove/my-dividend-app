@@ -7,50 +7,71 @@ from datetime import datetime
 # 1. 앱 설정
 st.set_page_config(page_title="배당 캘린더 & 배당락", page_icon="🔔", layout="wide")
 
-# 2. 데이터 가져오기 함수 (배당락일 추가)
-@st.cache_data(ttl=3600) # 배당락일은 자주 안 변하므로 1시간 캐시
+# 2. 데이터 가져오기 함수 (안전장치 강화 버전)
+@st.cache_data(ttl=3600)
 def get_stock_details(ticker_code):
+    # 기본값 설정
+    price, monthly_div, ex_date_str = 0.0, 0.0, "데이터 확인필요"
+    usd_krw = 1450.0 # 환율 실패 시 기본값
+    
     try:
-        usd_krw = yf.Ticker("USDKRW=X").history(period="1d")['Close'].iloc[-1]
+        # 환율 가져오기
+        rate_data = yf.Ticker("USDKRW=X").history(period="1d")
+        if not rate_data.empty:
+            usd_krw = rate_data['Close'].iloc[-1]
+        
         stock = yf.Ticker(ticker_code)
         
-        # 주가 및 배당금
-        price = stock.history(period="1d")['Close'].iloc[-1]
-        info = stock.info
+        # 1. 주가 가져오기
+        hist = stock.history(period="1d")
+        if not hist.empty:
+            price = hist['Close'].iloc[-1]
         
-        # 배당락일 가져오기 시도
-        ex_div_date = info.get('exDividendDate')
-        if ex_div_date:
-            ex_date_str = datetime.fromtimestamp(ex_div_date).strftime('%Y-%m-%d')
-        else:
-            ex_date_str = "데이터 확인필요" # 한국 종목은 주로 월말/분기말
+        # 2. 배당락일 가져오기 (가장 에러가 많은 부분 분리)
+        try:
+            ex_div_raw = stock.info.get('exDividendDate')
+            if ex_div_raw:
+                ex_date_str = datetime.fromtimestamp(ex_div_raw).strftime('%Y-%m-%d')
+            else:
+                # 한국 ETF(미배콜 등)는 보통 매달 마지막 영업일이 배당락일
+                if ticker_code.endswith(".KS") or ticker_code.endswith(".KQ"):
+                    ex_date_str = "매월 말일경"
+                else:
+                    ex_date_str = "분기/월말"
+        except:
+            ex_date_str = "조회불가(점검중)"
 
-        # 배당금 추정
+        # 3. 배당금 가져오기
         div_info = stock.dividends
         if not div_info.empty:
-            monthly_div = div_info[div_info.index > (datetime.now() - pd.Timedelta(days=365))].sum() / 12
+            recent_divs = div_info[div_info.index > (datetime.now() - pd.Timedelta(days=365))]
+            if not recent_divs.empty:
+                monthly_div = recent_divs.sum() / 12
+            else:
+                monthly_div = 0
         else:
+            # 야후에 데이터 없을 때만 사용하는 보조 데이터베이스
             defaults = {"490600.KS": 105, "402320.KS": 40, "SCHD": 0.2, "O": 0.26}
-            monthly_div = defaults.get(ticker_code, 50)
+            monthly_div = defaults.get(ticker_code, 0)
 
-        # 환율 적용
+        # 4. 환율 적용
         is_usd = not (ticker_code.endswith(".KS") or ticker_code.endswith(".KQ"))
         if is_usd:
             price *= usd_krw
             monthly_div *= usd_krw
             
         return price, monthly_div, ex_date_str, usd_krw
-    except:
-        return 10000.0, 50.0, "연동오류", 1450.0
+    except Exception as e:
+        # 어떤 오류가 나도 앱은 돌아가게 함
+        return 0.0, 0.0, "확인불가", usd_krw
 
-# 3. 세션 상태 관리
+# 3. 세션 상태 및 사이드바 (이전과 동일)
 if 'stock_list' not in st.session_state:
     st.session_state.stock_list = [
         {"name": "미배콜", "ticker": "490600.KS", "qty": 2000},
         {"name": "미배당", "ticker": "402320.KS", "qty": 860}
     ]
 
-# 4. 사이드바 UI
 st.sidebar.header("👤 {0}님의 설정".format(st.session_state.get('user_name', '윤재')))
 user_name = st.sidebar.text_input("사용자 이름", value="윤재")
 st.session_state.user_name = user_name
@@ -59,11 +80,11 @@ st.sidebar.divider()
 st.sidebar.subheader("📂 포트폴리오 관리")
 
 with st.sidebar.expander("➕ 종목 추가"):
-    new_name = st.text_input("종목명")
-    new_ticker = st.text_input("티커")
-    new_qty = st.number_input("수량", min_value=0, value=100)
+    n_name = st.text_input("종목명")
+    n_ticker = st.text_input("티커")
+    n_qty = st.number_input("수량", min_value=0, value=100)
     if st.button("추가하기"):
-        st.session_state.stock_list.append({"name": new_name, "ticker": new_ticker, "qty": new_qty})
+        st.session_state.stock_list.append({"name": n_name, "ticker": n_ticker, "qty": n_qty})
         st.rerun()
 
 for i, stock in enumerate(st.session_state.stock_list):
@@ -76,7 +97,7 @@ for i, stock in enumerate(st.session_state.stock_list):
             st.session_state.stock_list.pop(i)
             st.rerun()
 
-# 5. 계산 및 메인 화면
+# 4. 데이터 계산 및 메인 화면
 portfolio_data = []
 total_monthly_div = 0
 current_usd = 1450.0
@@ -84,41 +105,39 @@ current_usd = 1450.0
 for s in st.session_state.stock_list:
     p, d, ex_date, usd = get_stock_details(s['ticker'])
     current_usd = usd
+    val = p * s['qty']
+    div_val = d * s['qty']
     portfolio_data.append({
         "종목": s['name'],
-        "티커": s['ticker'],
-        "현재가": p,
-        "보유수량": s['qty'],
-        "자산가치": p * s['qty'],
-        "월예상배당": d * s['qty'],
-        "배당락일(예정)": ex_date
+        "현재가": f"{p:,.0f}원",
+        "자산가치": val,
+        "배당락일": ex_date,
+        "월배당": div_val
     })
-    total_monthly_div += d * s['qty']
+    total_monthly_div += div_val
 
 df = pd.DataFrame(portfolio_data)
 
-st.title(f"🔔 {user_name}님의 배당락 알리미")
-st.info(f"💡 대부분의 월배당 ETF는 **매달 말일**이 배당락일입니다. (미배콜/미배당 포함)")
+st.title(f"🔔 {user_name}님의 배당락 & 캘린더")
+st.success(f"현재 환율: 1$ = {current_usd:,.2f}원")
 
-# 상단 대시보드
-c1, c2, c3 = st.columns(3)
-c1.metric("월 예상 배당", f"{total_monthly_div:,.0f} 원")
-c2.metric("실시간 환율", f"{current_usd:,.2f} 원")
-c3.metric("총 종목 수", f"{len(df)} 개")
+# 메인 지표
+col1, col2 = st.columns(2)
+col1.metric("월 예상 배당 합계", f"{total_monthly_div:,.0f} 원")
+col2.metric("연 예상 배당 합계", f"{total_monthly_div * 12:,.0f} 원")
 
-# 6. 배당락 상세 리스트 (가장 중요한 부분)
-st.subheader("📅 종목별 배당락 정보")
-st.dataframe(df[["종목", "티커", "배당락일(예정)", "월예상배당"]].style.set_properties(**{'background-color': '#fff4f4'}, subset=['배당락일(예정)']), use_container_width=True)
+# 상세 표
+st.subheader("📋 종목별 상세 정보")
+st.table(df[["종목", "현재가", "배당락일", "월배당"]])
 
-# 7. 월별 그래프
+# 그래프
 st.divider()
 months = [f"{i}월" for i in range(1, 13)]
 cal_list = []
 for m in months:
     for _, row in df.iterrows():
-        cal_list.append({"월": m, "종목": row["종목"], "금액": row["월예상배당"]})
-st.plotly_chart(px.bar(pd.DataFrame(cal_list), x="월", y="금액", color="종목", title="연간 배당 흐름"), use_container_width=True)
+        cal_list.append({"월": m, "종목": row["종목"], "금액": row["월배당"]})
+st.plotly_chart(px.bar(pd.DataFrame(cal_list), x="월", y="금액", color="종목", title="월별 배당 현황"), use_container_width=True)
 
-# 푸터
 st.divider()
-st.markdown(f"<center>💖 {user_name} & 소은의 배당 엔진 v3.7 💖</center>", unsafe_allow_html=True)
+st.markdown(f"<center>💖 {user_name} & 소은의 배당 엔진 v3.8 💖</center>", unsafe_allow_html=True)
