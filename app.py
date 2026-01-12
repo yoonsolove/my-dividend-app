@@ -23,7 +23,8 @@ def get_dividend_stocks():
 current_prices = get_dividend_stocks()
 
 # 3. 사이드바 - 설정
-st.sidebar.header("👤 {0}님의 설정".format("윤재"))
+st.sidebar.header("👤 설정")
+user_name = st.sidebar.text_input("사용자 이름", value="윤재") 
 m_call_qty = st.sidebar.number_input("미배콜 보유 수량", value=2000)
 m_dang_qty = st.sidebar.number_input("미배당 보유 수량", value=860)
 
