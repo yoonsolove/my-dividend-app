@@ -142,3 +142,4 @@ st.plotly_chart(px.area(pd.DataFrame(sim_data), x="년수", y="자산", title="�
 
 st.divider()
 st.markdown(f"<center>💖 <b>{user_name} & 소은</b> 통합 관리 v4.6 💖</center>", unsafe_allow_html=True)
+
