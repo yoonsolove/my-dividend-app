@@ -4,24 +4,8 @@ import plotly.express as px
 import yfinance as yf
 from datetime import datetime, date
 
-# 1. 앱 설정 및 강제 스타일 주입 (폰트 깨짐 방지)
-st.set_page_config(page_title="배당 대시보드 v5.2", page_icon="💸", layout="wide")
-
-st.markdown("""
-    <style>
-    /* 아이콘 폰트 깨짐 텍스트 강제 숨김 */
-    [data-testid="stExpanderIcon"] {
-        visibility: hidden !important;
-        width: 0px !important;
-    }
-    /* 모바일에서 텍스트가 겹치지 않도록 조정 */
-    .stMetric {
-        background-color: #f0f2f6;
-        padding: 10px;
-        border-radius: 10px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+# 1. 앱 설정
+st.set_page_config(page_title="배당 대시보드 v5.3", page_icon="💸", layout="wide")
 
 # 2. 데이터 함수 (기존 유지)
 @st.cache_data(ttl=300)
@@ -73,44 +57,50 @@ for s in st.session_state.stock_list:
 df = pd.DataFrame(portfolio_data)
 total_div_post = total_div_pre * 0.846
 
-# 5. 메인 화면
+# 5. 메인 대시보드
 user_name = st.sidebar.text_input("사용자 이름", value="윤재")
 st.title(f"💰 {user_name}님의 배당 리포트")
 
-# 모바일 대응 2컬럼 배치
 c1, c2 = st.columns(2)
 c1.metric("총 자산", f"{total_asset:,.0f}원")
 c2.metric("월 수령액(세후)", f"{total_div_post:,.0f}원")
 
 st.divider()
 
-# 6. 종목 관리 섹션 (Expander 아이콘 깨짐 방지 처리)
-st.subheader("🛠️ 포트폴리오 관리")
-add_expander = st.expander("▶ 새 종목 추가", expanded=False)
-with add_expander:
-    n_name = st.text_input("종목명", key="add_n_v5")
-    n_ticker = st.text_input("티커", key="add_t_v5")
-    n_qty = st.number_input("수량", min_value=0, value=100, key="add_q_v5")
-    if st.button("목록에 추가하기"):
+# 6. [중요] 깨짐 없는 포트폴리오 관리 (Expander 제거)
+st.subheader("📝 종목 관리")
+
+# (1) 종목 추가 카드
+with st.container():
+    st.markdown("### ➕ 새 종목 추가")
+    add_c1, add_c2, add_c3 = st.columns([1, 1, 1])
+    n_name = add_c1.text_input("종목명", key="final_n")
+    n_ticker = add_c2.text_input("티커", key="final_t")
+    n_qty = add_c3.number_input("수량", min_value=0, value=100, key="final_q")
+    if st.button("🚀 포트폴리오에 즉시 추가", use_container_width=True):
         if n_name and n_ticker:
             st.session_state.stock_list.append({"name": n_name, "ticker": n_ticker, "qty": n_qty})
             st.rerun()
 
-edit_expander = st.expander("▶ 보유 종목 수정 및 삭제", expanded=False)
-with edit_expander:
+st.write("") # 간격
+
+# (2) 보유 종목 리스트 수정/삭제 카드
+with st.container():
+    st.markdown("### 📦 보유 종목 수정 및 삭제")
     for i, stock in enumerate(st.session_state.stock_list):
-        ec1, ec2 = st.columns([3, 1])
-        with ec1:
-            st.session_state.stock_list[i]['qty'] = st.number_input(f"{stock['name']} 수량", value=stock['qty'], key=f"eq_{i}_v5")
-        with ec2:
-            st.write("") # 간격 조정
-            if st.button("❌", key=f"ed_{i}_v5"):
+        # 모바일에서도 보기 좋게 3분할
+        edit_c1, edit_c2, edit_c3 = st.columns([2, 2, 1])
+        with edit_c1:
+            st.write(f"**{stock['name']}**")
+        with edit_c2:
+            st.session_state.stock_list[i]['qty'] = st.number_input("수량", value=stock['qty'], key=f"fq_{i}", label_visibility="collapsed")
+        with edit_c3:
+            if st.button("삭제", key=f"fd_{i}", use_container_width=True):
                 st.session_state.stock_list.pop(i)
                 st.rerun()
+        st.write("---")
 
-st.divider()
-
-# 7. 상세 내역 및 차트
+# 7. 상세 내역 및 그래프
 t1, t2 = st.tabs(["종목 상세", "배당 흐름"])
 with t1:
     st.dataframe(df, use_container_width=True)
@@ -132,7 +122,7 @@ for m in range(1, (sim_y * 12) + 1):
     temp_asset += (temp_asset * avg_yield_post / 12) + (add_m * 10000)
     if m % 12 == 0: sim_data.append({"년수": f"{m//12}년", "자산(억)": round(temp_asset/100000000, 2)})
 
-st.plotly_chart(px.area(pd.DataFrame(sim_data), x="년수", y="자산(억)", title="자산 성장 (억 단위)"), use_container_width=True)
+st.plotly_chart(px.area(pd.DataFrame(sim_data), x="년수", y="자산(억)", title="자산 성장 (단위: 억)"), use_container_width=True)
 
 st.divider()
-st.markdown(f"<center>💖 <b>{user_name} & 소은</b> v5.2</center>", unsafe_allow_html=True)
+st.markdown(f"<center>💖 <b>{user_name} & 소은</b> 통합 관리 v5.3 💖</center>", unsafe_allow_html=True)
