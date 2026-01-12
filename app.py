@@ -5,9 +5,9 @@ import yfinance as yf
 from datetime import datetime, date
 
 # 1. 앱 설정
-st.set_page_config(page_title="배당 대시보드 v5.8", page_icon="💰", layout="wide")
+st.set_page_config(page_title="배당 대시보드 v5.9", page_icon="💰", layout="wide")
 
-# 2. 데이터 함수 (기존 동일)
+# 2. 데이터 함수 (캐시 적용)
 @st.cache_data(ttl=300)
 def get_stock_details(ticker_code):
     price_map = {"490600.KS": 10500.0, "402320.KS": 11500.0}
@@ -65,12 +65,17 @@ with t2:
         for _, row in df.iterrows(): cal_list.append({"월": m, "종목": row["종목"], "금액": row["세후"]})
     st.plotly_chart(px.bar(pd.DataFrame(cal_list), x="월", y="금액", color="종목"), use_container_width=True)
 
-# 7. 투자 시나리오 설정
+# 7. [수정됨] 투자 시나리오 설정 (슬라이더 -> 수동 기입)
 st.divider()
-st.subheader("⚙️ 투자 시나리오 설정")
-add_m = st.slider("매달 추가 투자금 (만원)", 0, 1000, 100, step=10, key="v58_add_m")
-reinvest_rate = st.slider("배당금 재투자 비율 (%)", 0, 100, 100, step=10, key="v58_reinvest")
-sim_y = st.select_slider("시뮬레이션 기간 (년)", options=[5, 10, 15, 20, 30, 40], value=20, key="v58_sim_y")
+st.subheader("⚙️ 투자 시나리오 설정 (수동 기입)")
+col_set1, col_set2, col_set3 = st.columns(3)
+
+with col_set1:
+    add_m = st.number_input("매달 추가 투자금 (만원)", min_value=0, value=100, step=1, key="v59_add_m")
+with col_set2:
+    reinvest_rate = st.number_input("배당금 재투자 비율 (%)", min_value=0, max_value=100, value=100, step=1, key="v59_reinvest")
+with col_set3:
+    sim_y = st.number_input("시뮬레이션 기간 (년)", min_value=1, max_value=50, value=20, step=1, key="v59_sim_y")
 
 # 8. 미래 성장 시뮬레이션
 sim_results = []
@@ -80,9 +85,14 @@ annual_yield_post = (total_div_post * 12) / total_asset if total_asset > 0 else 
 for m in range(1, (sim_y * 12) + 1):
     invest_amt = ((temp_asset * annual_yield_post / 12) * (reinvest_rate / 100)) + (add_m * 10000)
     temp_asset += invest_amt
-    if m % (10 * 12) == 0 or m == (sim_y * 12):
+    # 5년 단위 또는 마지막 연도 기록
+    if m % (5 * 12) == 0 or m == (sim_y * 12):
         y = m // 12
-        sim_results.append({"년수": f"{y}년 후", "자산(억)": round(temp_asset / 100000000, 2), "월배당(만원)": int((temp_asset * annual_yield_post / 12) / 10000)})
+        sim_results.append({
+            "년수": f"{y}년 후", 
+            "자산(억)": round(temp_asset / 100000000, 2), 
+            "월배당(만원)": int((temp_asset * annual_yield_post / 12) / 10000)
+        })
 
 st.plotly_chart(px.area(pd.DataFrame(sim_results), x="년수", y="자산(억)"), use_container_width=True)
 
@@ -94,39 +104,29 @@ for row in sim_results:
         sc3.metric("월급", f"{row['월배당(만원)']}만")
         st.write("---")
 
-# 9. [해결!] 종목 관리 (겹침 방지 카드 레이아웃)
+# 9. 종목 관리
 st.divider()
 st.subheader("📦 보유 종목 수정 및 추가")
-
-# (A) 종목 추가 - 별도의 섹션으로 분리
 with st.container():
     st.write("➕ **새 종목 추가**")
     new_col1, new_col2 = st.columns(2)
-    n_name = new_col1.text_input("종목명", key="v58_nn")
-    n_ticker = new_col2.text_input("티커", key="v58_nt")
-    n_qty = st.number_input("수량", min_value=0, value=100, key="v58_nq")
-    if st.button("🚀 포트폴리오에 추가", use_container_width=True):
+    n_name = new_col1.text_input("종목명", key="v59_nn")
+    n_ticker = new_col2.text_input("티커", key="v59_nt")
+    n_qty = st.number_input("수량", min_value=0, value=100, key="v59_nq")
+    if st.button("🚀 추가", use_container_width=True):
         if n_name and n_ticker:
             st.session_state.stock_list.append({"name": n_name, "ticker": n_ticker, "qty": n_qty})
             st.rerun()
 
-st.write("") 
-
-# (B) 종목 수정/삭제 - 카드형 배치
-st.write("📋 **현재 보유 종목 리스트**")
+st.write("📋 **보유 종목**")
 for i, stock in enumerate(st.session_state.stock_list):
     with st.container():
-        # 종목명과 삭제 버튼을 한 줄에 배치
         name_col, del_col = st.columns([4, 1])
-        name_col.markdown(f"**{i+1}. {stock['name']}** ({stock['ticker']})")
-        if del_col.button("❌", key=f"v58_del_{i}"):
+        name_col.markdown(f"**{i+1}. {stock['name']}**")
+        if del_col.button("❌", key=f"v59_del_{i}"):
             st.session_state.stock_list.pop(i)
             st.rerun()
-        
-        # 수량 수정 칸을 아래줄에 넓게 배치 (겹침 방지)
-        new_q = st.number_input(f"{stock['name']} 수량 수정", value=stock['qty'], key=f"v58_q_{i}", label_visibility="collapsed")
-        st.session_state.stock_list[i]['qty'] = new_q
-        st.markdown("<br>", unsafe_allow_html=True) # 줄간격
+        st.session_state.stock_list[i]['qty'] = st.number_input(f"수량 수정", value=stock['qty'], key=f"v59_q_{i}", label_visibility="collapsed")
 
 st.divider()
-st.markdown(f"<center>💖 <b>{user_name} & 소은</b> v5.8</center>", unsafe_allow_html=True)
+st.markdown(f"<center>💖 <b>{user_name} & 소은</b> v5.9</center>", unsafe_allow_html=True)
