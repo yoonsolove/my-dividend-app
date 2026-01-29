@@ -3,101 +3,78 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, date
 
-# 1. 앱 설정
-st.set_page_config(page_title="배당 마스터 v3.1", layout="wide", page_icon="💰")
+# 1. 앱 설정 및 스타일
+st.set_page_config(page_title="배당 통합 관리 v3.5", layout="wide", page_icon="📈")
 
-# 세션 상태 초기화 (데이터 휘발 방지)
 if 'portfolio' not in st.session_state:
-    st.session_state.portfolio = pd.DataFrame(columns=["종목명", "투자액", "배당률", "배당성장률", "배당락일"])
+    st.session_state.portfolio = pd.DataFrame(columns=["종목명", "투자액", "배당률", "배당성장률", "배당락일", "유형"])
 
-st.title("💰 맞춤형 배당 관리 시스템 v3.1")
-st.markdown("---")
-
-# 2. 종목 입력 및 관리 섹션
-with st.container():
-    col1, col2, col3 = st.columns([1, 1, 1])
+# --- 사이드바: 종목 등록 (2.0 로직: 개별 설정) ---
+st.sidebar.title("➕ 종목 관리")
+with st.sidebar.form("add_form"):
+    name = st.text_input("종목명", value="SCHD").upper()
+    category = st.selectbox("종목 유형", ["배당성장주", "미배콜/고배당", "리츠", "일반"])
+    amount = st.number_input("투자금액 ($)", min_value=0, value=10000)
+    yield_rate = st.number_input("현재 배당률 (%)", min_value=0.0, value=3.5)
     
-    with col1:
-        st.subheader("📌 종목 기본 정보")
-        name = st.text_input("종목명 (예: JEPI, SCHD, O)", value="SCHD").upper()
-        invest_amt = st.number_input("현재 총 투자액 ($)", min_value=0, value=10000, step=1000)
-        
-    with col2:
-        st.subheader("📈 배당 정책 설정")
-        yield_rate = st.number_input("현재 시가배당률 (%)", min_value=0.0, value=3.4, step=0.1)
-        # 미배콜은 0~1%, 배당성장주는 10% 이상으로 입력 유도
-        growth_rate = st.number_input("연간 배당성장률 (%)", min_value=0.0, value=10.0, 
-                                     help="미배콜(JEPI 등)은 0%에 가깝게, 배당성장주(SCHD 등)는 10% 내외를 권장합니다.")
-        
-    with col3:
-        st.subheader("📅 배당 일정 관리")
-        ex_date = st.date_input("다가오는 배당락일", value=date.today())
-        add_btn = st.button("💾 포트폴리오에 추가/업데이트", use_container_width=True)
+    # 2.0 핵심: 미배콜은 0~1%, 성장주는 10% 등 개별 지정
+    growth_rate = st.number_input("연간 배당성장률 (%)", value=10.0 if category == "배당성장주" else 0.5)
+    ex_date = st.date_input("차기 배당락일", value=date.today())
+    
+    submitted = st.form_submit_button("포트폴리오 반영")
+    if submitted:
+        new_row = pd.DataFrame([[name, amount, yield_rate, growth_rate, ex_date, category]], 
+                               columns=st.session_state.portfolio.columns)
+        st.session_state.portfolio = pd.concat([st.session_state.portfolio, new_row]).drop_duplicates('종목명', keep='last')
+        st.success(f"{name} 등록 완료!")
 
-if add_btn:
-    new_stock = pd.DataFrame([[name, invest_amt, yield_rate, growth_rate, ex_date]], 
-                             columns=["종목명", "투자액", "배당률", "배당성장률", "배당락일"])
-    # 기존 종목이 있으면 업데이트, 없으면 추가
-    st.session_state.portfolio = pd.concat([st.session_state.portfolio, new_stock]).drop_duplicates('종목명', keep='last')
-    st.success(f"✅ {name} 종목이 성공적으로 반영되었습니다.")
+# --- 메인 화면: 3.0 로직 (통합 대시보드) ---
+st.title("📊 통합 배당 대시보드")
 
-# 3. 배당락일 캘린더 (D-Day 알림)
-st.markdown("---")
-st.subheader("📅 실시간 배당락일 캘린더")
-if not st.session_state.portfolio.empty:
+if st.session_state.portfolio.empty:
+    st.warning("왼쪽 사이드바에서 종목을 먼저 등록해주세요!")
+else:
+    # 1. 상단 요약 (3.0 자동화 로직)
+    total_invest = st.session_state.portfolio['투자액'].sum()
+    total_annual_div = (st.session_state.portfolio['투자액'] * st.session_state.portfolio['배당률'] / 100).sum()
+    
+    m1, m2, m3 = st.columns(3)
+    m1.metric("총 투자액", f"${total_invest:,.0f}")
+    m2.metric("예상 연 배당금(세전)", f"${total_annual_div:,.2f}")
+    m3.metric("실제 수령액(세후 15%)", f"${total_annual_div * 0.85:,.2f}")
+
+    st.divider()
+
+    # 2. 배당락일 D-Day 알림 (3.0 자동 반영)
+    st.subheader("📅 배당락일 캘린더 (D-Day)")
     today = date.today()
-    cal_list = []
+    cal_df = st.session_state.portfolio.copy()
+    cal_df['남은일수'] = cal_df['배당락일'].apply(lambda x: (x - today).days)
+    cal_df['상태'] = cal_df['남은일수'].apply(lambda x: f"D-{x}" if x >= 0 else "종료")
     
-    for _, row in st.session_state.portfolio.iterrows():
-        d_day = (row['배당락일'] - today).days
-        status = f"D-{d_day}" if d_day >= 0 else "종료"
-        cal_list.append({
-            "종목": row['종목명'],
-            "배당락일": row['배당락일'],
-            "남은 일정": status,
-            "성격": "미배콜/고배당" if row['배당성장률'] < 3 else "배당성장주"
-        })
-    
-    cal_df = pd.DataFrame(cal_list).sort_values(by="배당락일")
-    
-    # 가독성을 위한 조건부 서식 (D-3 이내 강조)
-    def style_dday(val):
+    # D-3 이내 종목 강조
+    def highlight_urgent(val):
         color = 'red' if 'D-0' in str(val) or 'D-1' in str(val) or 'D-2' in str(val) or 'D-3' in str(val) else 'black'
         return f'color: {color}; font-weight: bold'
 
-    st.table(cal_df.style.applymap(style_dday, subset=['남은 일정']))
-else:
-    st.info("먼저 종목을 추가해 주세요.")
+    st.table(cal_df[['종목명', '유형', '배당락일', '상태']].sort_values('배당락일').style.applymap(highlight_urgent, subset=['상태']))
 
-# 4. [개별 성장률 반영] 미래 배당금 시뮬레이션
-st.markdown("---")
-st.subheader("🚀 10년 후 나의 월급(배당금) 변화")
-if not st.session_state.portfolio.empty:
+    # 3. 미래 시뮬레이션 (2.0 + 3.0 조합)
+    st.divider()
+    st.subheader("🚀 10개년 복리 배당 성장 예측")
+    
     years = list(range(1, 11))
     sim_results = []
     
     for _, row in st.session_state.portfolio.iterrows():
-        annual_div = row['투자액'] * (row['배당률'] / 100)
+        base_div = row['투자액'] * (row['배당률'] / 100)
         for y in years:
-            # 복리 배당성장률 적용 (row['배당성장률'] 사용)
-            future_div = annual_div * ((1 + row['배당성장률'] / 100) ** (y - 1))
-            sim_results.append({
-                "연도": f"{y}년차",
-                "종목": row['종목명'],
-                "예상배당금": round(future_div, 2)
-            })
+            # 종목별로 다른 성장률(growth_rate) 적용
+            future_val = base_div * ((1 + row['배당성장률'] / 100) ** (y - 1))
+            sim_results.append({"연도": f"{y}년", "종목": row['종목명'], "배당금": future_val})
     
-    sim_df = pd.DataFrame(sim_results)
-    
-    # 시각화: 누적 막대 차트
-    fig = px.bar(sim_df, x="연도", y="예상배당금", color="종목", 
-                 title="종목별 배당성장률이 반영된 장기 배당 흐름",
-                 labels={"예상배당금": "연간 예상 배당금 ($)"},
-                 barmode='group')
+    fig = px.bar(pd.DataFrame(sim_results), x="연도", y="배당금", color="종목", 
+                 title="종목별 성장률이 적용된 누적 배당수익", barmode='group')
     st.plotly_chart(fig, use_container_width=True)
 
-    # 전문가적 분석 피드백
-    st.info("""
-    **💡 분석 팁:** - **미배콜 종목:** 초기 배당금은 높지만 시간이 흘러도 막대의 높이가 거의 일정합니다.
-    - **배당성장주:** 초기 높이는 낮지만 시간이 갈수록 막대가 가파르게 높아지는 'J-커브'를 그리게 됩니다.
-    """)
+    st.info("💡 **조합 분석:** 미배콜은 현재 높은 배당을 주지만 10년 뒤에도 동일하며, 배당성장주는 현재는 적지만 10년 뒤 막대가 훨씬 높아지는 것을 볼 수 있습니다.")
