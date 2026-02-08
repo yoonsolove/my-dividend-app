@@ -4,7 +4,7 @@ import yfinance as yf
 from datetime import datetime, timedelta
 
 # 1. 앱 설정
-st.set_page_config(page_title="배당 마스터 v15.6", layout="wide", page_icon="📈")
+st.set_page_config(page_title="배당 마스터 v15.7", layout="wide", page_icon="⚖️")
 
 # --- 세션 상태 초기화 ---
 if 'portfolio' not in st.session_state:
@@ -13,8 +13,8 @@ if 'portfolio' not in st.session_state:
 if 'edit_data' not in st.session_state:
     st.session_state.edit_data = {"ticker": "", "ticker_original": None, "count": 100, "price": 0.0, "dps": 0.0, "growth": 5.0, "cat": "일반", "cycle": "월배당"}
 
-# --- [메인 상단 관리 로직] ---
-st.title("📈 배당 마스터 v15.6 (오버플로 방지 버전)")
+# --- [메인 상단] ---
+st.title("📈 배당 마스터 v15.7 (정밀 시뮬레이션)")
 
 col_sel, col_del = st.columns([3, 1])
 with col_sel:
@@ -38,11 +38,11 @@ with col_sel:
 with col_del:
     st.write(" ")
     st.write(" ")
-    if selected_stock != "새 종목 추가" and st.button("❌ 선택 종목 삭제", use_container_width=True):
+    if selected_stock != "새 종목 추가" and st.button("❌ 삭제", use_container_width=True):
         st.session_state.portfolio = st.session_state.portfolio[st.session_state.portfolio["종목명"] != selected_stock].reset_index(drop=True)
         st.rerun()
 
-# --- [사이드바 입력] ---
+# --- [사이드바 설정] ---
 st.sidebar.title("🤖 데이터 설정")
 ticker_input = st.sidebar.text_input("티커 입력", value=st.session_state.edit_data.get("ticker", "")).upper()
 
@@ -77,53 +77,63 @@ if save_btn:
     st.session_state.portfolio = pd.concat([st.session_state.portfolio, new_row]).reset_index(drop=True)
     st.rerun()
 
-# --- [결과 출력 영역] ---
+# --- [시뮬레이션 로직 보정] ---
 if not st.session_state.portfolio.empty:
     st.divider()
-    set_c1, set_c2, set_c3, set_c4 = st.columns(4)
-    with set_c1: target_years = st.slider("📅 분석 기간 (년)", 1, 30, 10)
-    with set_c2: monthly_add = st.number_input("💵 매달 추가 투자금", value=1000000)
-    with set_c3: price_growth = st.slider("📈 연간 주가 상승률 (%)", 0, 15, 3)
-    with set_c4: 
-        is_reinvest = st.checkbox("🔄 재투자", value=True)
-        is_tax = st.checkbox("💸 세금(15.4%)", value=True)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: target_years = st.slider("📅 분석 기간 (년)", 1, 30, 10)
+    with c2: monthly_add = st.number_input("💵 매달 총 추가 투자금", value=500000)
+    with c3: price_growth = st.slider("📈 연간 주가 상승률 (%)", 0, 15, 3)
+    with c4: 
+        is_reinvest = st.checkbox("🔄 배당 재투자", value=True)
+        is_tax = st.checkbox("💸 세금 공제(15.4%)", value=True)
 
     years = list(range(1, target_years + 1))
     forecast_rows = []
-    MAX_VAL = 1e15 # 💡 숫자가 너무 커지는 것을 방지 (천조 단위 제한)
-
+    
+    # 각 종목별로 시뮬레이션 수행
     for _, row in st.session_state.portfolio.iterrows():
-        c_shares, c_price, c_dps = float(row['보유수량']), float(row['현재주가']), float(row['주당배당금'])
-        dgr, pgr = row['배당성장률'] / 100, price_growth / 100
-        row_f = {"종목명": row['종목명'], "주기": row.get('지급주기', '월배당'), "성장률": f"{row['배당성장률']:.1f}%"}
+        # 초기값 설정
+        shares = float(row['보유수량'])
+        price = float(row['현재주가'])
+        annual_dps = float(row['주당배당금'])
+        d_growth = row['배당성장률'] / 100
+        p_growth = price_growth / 100
+        tax = 0.846 if is_tax else 1.0
+        
+        # 종목별 할당 투자금 (매달)
+        item_monthly_fund = monthly_add / len(st.session_state.portfolio)
+        
+        stock_forecast = {"종목명": row['종목명'], "성장률": f"{row['배당성장률']:.1f}%"}
         
         for y in years:
-            monthly_div = min((c_shares * c_dps) / 12, MAX_VAL) # 💡 오버플로 방지
-            row_f[f"{y}년차"] = monthly_div
-            c_dps = min(c_dps * (1 + dgr), MAX_VAL)
-            if is_reinvest:
-                net_div = (c_shares * (c_dps / (1+dgr))) * (0.846 if is_tax else 1.0)
-                invest_fund = net_div + (monthly_add * 12 / len(st.session_state.portfolio))
-            else:
-                invest_fund = (monthly_add * 12 / len(st.session_state.portfolio))
-            c_price = min(c_price * (1 + pgr), MAX_VAL)
-            c_shares = min(c_shares + (invest_fund / max(c_price, 1.0)), 1e12) # 주식수도 1조주 제한
+            # 1. 현재 주식 수 기준 연간 배당금 (세전 월평균으로 기록)
+            monthly_income = (shares * annual_dps) / 12
+            stock_forecast[f"{y}년차"] = int(monthly_income)
             
-        forecast_rows.append(row_f)
+            # 2. 연말 정산 (1년 단위 시뮬레이션 업데이트)
+            # 배당금 재투자 액수 계산
+            reinvest_amount = (shares * annual_dps * tax) if is_reinvest else 0
+            # 1년간의 총 투자금 (재투자 + 매달 적립금)
+            total_annual_investment = reinvest_amount + (item_monthly_fund * 12)
+            
+            # 주가와 주당 배당금 업데이트 (연초 대비 기말 기준)
+            price *= (1 + p_growth)
+            annual_dps *= (1 + d_growth)
+            
+            # 추가 매수 주식 수 (평균 주가 적용 - 간략화하여 기말 주가 적용)
+            new_shares = total_annual_investment / max(price, 1.0)
+            shares += new_shares
+            
+        forecast_rows.append(stock_forecast)
 
+    # 결과 데이터프레임 생성 및 합계 계산
     res_df = pd.DataFrame(forecast_rows)
-    # 합계 계산 시에도 숫자 타입 확인
-    sum_row = {"종목명": "📊 월 합계", "주기": "-", "성장률": "-"}
+    sum_row = {"종목명": "📊 월 합계", "성장률": "-"}
     for y in years:
         sum_row[f"{y}년차"] = res_df[f"{y}년차"].sum()
     res_df = pd.concat([res_df, pd.DataFrame([sum_row])], ignore_index=True)
 
-    # 💡 데이터프레임 표시 전 최종 타입 변환 (안전하게 float로 통일)
-    for y in years:
-        res_df[f"{y}년차"] = res_df[f"{y}년차"].apply(lambda x: float(x) if x < MAX_VAL else MAX_VAL)
-
-    st.write(f"### 🗓️ {target_years}개년 예상 월 평균 배당금")
+    st.subheader(f"🗓️ {target_years}개년 예상 월 평균 배송금 (세전)")
     st.dataframe(res_df.style.format({f"{y}년차": "{:,.0f}원" for y in years}), use_container_width=True)
-    st.success(f"🎯 **{target_years}년 후 월 수령액: {sum_row[f'{target_years}년차']:,.0f}원**")
-else:
-    st.info("💡 종목을 추가해 주세요.")
+    st.success(f"🎯 **{target_years}년 후 총 예상 월 수령액은 {sum_row[f'{target_years}년차']:,.0f}원입니다.**")
