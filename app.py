@@ -4,13 +4,19 @@ import yfinance as yf
 from datetime import datetime, timedelta
 
 # 1. 앱 설정
-st.set_page_config(page_title="배당 마스터 v15.8", layout="wide", page_icon="⚖️")
+st.set_page_config(page_title="배당 마스터 v15.9", layout="wide", page_icon="⚖️")
 
-# --- 세션 상태 초기화 (재투자 여부 필드 추가) ---
+# --- [보정 로직] 세션 상태 초기화 및 규격 맞춤 ---
+# 우리가 사용할 표준 컬럼 리스트
+STANDARD_COLUMNS = ["종목명", "보유수량", "현재주가", "주당배당금", "배당성장률", "유형", "지급주기", "재투자여부"]
+
 if 'portfolio' not in st.session_state:
-    st.session_state.portfolio = pd.DataFrame(columns=[
-        "종목명", "보유수량", "현재주가", "주당배당금", "배당성장률", "유형", "지급주기", "재투자여부"
-    ])
+    st.session_state.portfolio = pd.DataFrame(columns=STANDARD_COLUMNS)
+else:
+    # ⚠️ 중요: 기존 데이터에 '재투자여부' 칸이 없으면 강제로 만들어줌 (ValueError 방지)
+    for col in STANDARD_COLUMNS:
+        if col not in st.session_state.portfolio.columns:
+            st.session_state.portfolio[col] = True if col == "재투자여부" else ""
 
 if 'edit_data' not in st.session_state:
     st.session_state.edit_data = {
@@ -19,12 +25,12 @@ if 'edit_data' not in st.session_state:
     }
 
 # --- [메인 상단] ---
-st.title("📈 배당 마스터 v15.8 (개별 설정 저장)")
+st.title("📈 배당 마스터 v15.9 (오류 복구 및 규격화)")
 
 col_sel, col_del = st.columns([3, 1])
 with col_sel:
     stock_list = ["새 종목 추가"] + list(st.session_state.portfolio["종목명"])
-    selected_stock = st.selectbox("📝 관리할 종목 선택 (선택 시 해당 종목의 재투자 설정도 로드됩니다):", stock_list, key="stock_selector")
+    selected_stock = st.selectbox("📝 관리할 종목 선택:", stock_list, key="stock_selector")
     
     if selected_stock != "새 종목 추가":
         t = st.session_state.portfolio[st.session_state.portfolio["종목명"] == selected_stock].iloc[0]
@@ -34,7 +40,7 @@ with col_sel:
                 "count": int(t["보유수량"]), "price": float(t["현재주가"]),
                 "dps": float(t["주당배당금"]), "growth": float(t["배당성장률"]),
                 "cat": t["유형"], "cycle": t.get("지급주기", "월배당"),
-                "is_reinvest": t.get("재투자여부", True) # 저장된 재투자 설정 로드
+                "is_reinvest": t.get("재투자여부", True)
             }
             st.rerun()
     elif st.session_state.edit_data.get("ticker_original") is not None:
@@ -74,22 +80,29 @@ with st.sidebar.form("edit_form"):
     divisor = 12 if f_cycle == "월배당" else 4 if f_cycle == "분기배당" else 1
     f_dps_input = st.number_input(f"{f_cycle} 1회 배당금", value=float(st.session_state.edit_data.get("dps", 0.0)/divisor))
     f_growth = st.number_input("배당 성장률 (%)", value=float(st.session_state.edit_data.get("growth", 5.0)))
-    
-    # 💡 [핵심] 재투자 여부를 여기서 설정하고 저장합니다.
     f_reinvest = st.checkbox("🔄 이 종목 배당금 재투자", value=st.session_state.edit_data.get("is_reinvest", True))
-    
     f_cat = st.selectbox("유형", ["배당성장주", "미배콜/고배당", "리츠", "일반"])
     save_btn = st.form_submit_button("💾 저장/수정")
 
 if save_btn:
     multiplier = 12 if f_cycle == "월배당" else 4 if f_cycle == "분기배당" else 1
-    new_data = [ticker_input, f_count, f_price, f_dps_input * multiplier, f_growth, f_cat, f_cycle, f_reinvest]
+    # 💡 컬럼 순서에 맞춰서 정확히 매칭
+    new_data = {
+        "종목명": ticker_input, 
+        "보유수량": f_count, 
+        "현재주가": f_price, 
+        "주당배당금": f_dps_input * multiplier, 
+        "배당성장률": f_growth, 
+        "유형": f_cat, 
+        "지급주기": f_cycle, 
+        "재투자여부": f_reinvest
+    }
     
     if selected_stock != "새 종목 추가":
         st.session_state.portfolio = st.session_state.portfolio[st.session_state.portfolio["종목명"] != selected_stock]
     
-    new_row = pd.DataFrame([new_data], columns=st.session_state.portfolio.columns)
-    st.session_state.portfolio = pd.concat([st.session_state.portfolio, new_row]).reset_index(drop=True)
+    new_row = pd.DataFrame([new_data])
+    st.session_state.portfolio = pd.concat([st.session_state.portfolio, new_row], ignore_index=True)
     st.rerun()
 
 # --- [시뮬레이션 로직] ---
@@ -99,46 +112,40 @@ if not st.session_state.portfolio.empty:
     with c1: target_years = st.slider("📅 분석 기간 (년)", 1, 30, 10)
     with c2: monthly_add = st.number_input("💵 매달 총 추가 투자금", value=500000)
     with c3: price_growth = st.slider("📈 연간 주가 상승률 (%)", 0, 15, 3)
-    with c4: 
-        is_tax = st.checkbox("💸 세금 공제(15.4%)", value=True)
+    with c4: is_tax = st.checkbox("💸 세금 공제(15.4%)", value=True)
 
     years = list(range(1, target_years + 1))
     forecast_rows = []
     
     for _, row in st.session_state.portfolio.iterrows():
-        shares = float(row['보유_수량'] if '보유_수량' in row else row['보유수량'])
+        shares = float(row['보유수량'])
         price = float(row['현재주가'])
         annual_dps = float(row['주당배당금'])
         d_growth = row['배당성장률'] / 100
         p_growth = price_growth / 100
         tax = 0.846 if is_tax else 1.0
         
-        # 💡 각 종목에 저장된 재투자 여부 확인
         stock_reinvest = row.get('재투자여부', True)
         item_monthly_fund = monthly_add / len(st.session_state.portfolio)
         
         stock_forecast = {"종목명": row['종목명'], "재투자": "O" if stock_reinvest else "X"}
         
         for y in years:
-            monthly_income = (shares * annual_dps) / 12
-            stock_forecast[f"{y}년차"] = int(monthly_income)
-            
-            # 재투자 여부에 따른 계산 분기
-            reinvest_amount = (shares * annual_dps * tax) if stock_reinvest else 0
-            total_annual_investment = reinvest_amount + (item_monthly_fund * 12)
-            
+            stock_forecast[f"{y}년차"] = int((shares * annual_dps) / 12)
+            reinvest_fund = (shares * annual_dps * tax) if stock_reinvest else 0
+            total_fund = reinvest_fund + (item_monthly_fund * 12)
             price *= (1 + p_growth)
             annual_dps *= (1 + d_growth)
-            shares += (total_annual_investment / max(price, 1.0))
+            shares += (total_fund / max(price, 1.0))
             
         forecast_rows.append(stock_forecast)
 
     res_df = pd.DataFrame(forecast_rows)
     sum_row = {"종목명": "📊 월 합계", "재투자": "-"}
-    for y in years:
-        sum_row[f"{y}년차"] = res_df[f"{y}년차"].sum()
+    for y in years: sum_row[f"{y}년차"] = res_df[f"{y}년차"].sum()
     res_df = pd.concat([res_df, pd.DataFrame([sum_row])], ignore_index=True)
 
-    st.subheader(f"🗓️ {target_years}개년 예상 월 평균 배송금 (세전)")
+    st.subheader(f"🗓️ {target_years}개년 예상 월 평균 배당금 (세전)")
     st.dataframe(res_df.style.format({f"{y}년차": "{:,.0f}원" for y in years}), use_container_width=True)
-    st.info("💡 각 종목의 재투자 설정은 왼쪽 '2단계: 등록 및 수정' 메뉴의 체크박스에서 변경할 수 있습니다.")
+else:
+    st.info("💡 종목을 추가해 주세요.")
